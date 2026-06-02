@@ -1,8 +1,8 @@
 all: main.out readme.out
 
-LIBS = -lrvg -lgsl -lm
+LIBS = -lrvg $(shell gsl-config --libs-without-cblas)
 INCLUDES = -I ../build/include -L ../build/lib/
-CFLAGS = -O3 -DNDEBUG -Wl,-z,execstack
+CFLAGS = -O3 -DNDEBUG -Wl,-z,execstack $(shell gsl-config --cflags)
 
 %.out: %.c
 	gcc -o $@ $(CFLAGS) $(INCLUDES) $^ $(LIBS)
