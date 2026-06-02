@@ -4,9 +4,9 @@ FILES.h = $(wildcard *.h)
 FILES.c = $(wildcard *.c)
 FILES.o = ${FILES.c:.c=.o}
 
-LIBS = -lgsl -lgmp -lm
+LIBS = $(shell gsl-config --libs-without-cblas) -lgmp
 
-CFLAGS ?= -O3 -DNDEBUG -flto -march=native
+CFLAGS ?= -O3 -DNDEBUG -flto -march=native $(shell gsl-config --cflags)
 
 %.o: %.c %.h
 	gcc -c $(CFLAGS) -o $@ $<
