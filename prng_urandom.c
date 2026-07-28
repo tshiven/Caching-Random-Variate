@@ -30,6 +30,9 @@ typedef struct {
 static inline unsigned long int
 urandom_get (void *vstate) {
     unsigned char buffer[sizeof(uint64_t)];
+#if defined(__APPLE__)
+    if (getentropy(buffer, sizeof(buffer)) != 0) { abort(); }
+#else
     size_t offset = 0;
     while (offset < sizeof(buffer)) {
         ssize_t nread = getrandom(buffer + offset, sizeof(buffer) - offset, 0);
@@ -40,6 +43,7 @@ urandom_get (void *vstate) {
         if (nread == 0) { abort(); }
         offset += (size_t)nread;
     }
+#endif
     uint64_t value = 0;
     memcpy(&value, buffer, sizeof(buffer));
     return value;
