@@ -130,7 +130,7 @@ footer{padding:2.6rem 0 5rem;text-align:center;color:var(--ink-faint);font-size:
 
     <p>Cryptography raises the stakes further: a key generator with even a faint bias makes it more vulnerable, and floating-point rounding often introduces such biases.</p>
 
-    <p>Underneath all of these bugs sits one structural problem. Classical sampling algorithms are designed in the <em>Real-RAM</em> model where you can draw a perfectly uniform real number from the unit interval and compute with infinite precision. A physical computer can't do either. It gets a stream of random bits and executes finite-precision arithmetic. The distribution your library actually produces is therefore usually unknown and much different from the distribution expected from the machine.</p>
+    <p>Underneath all of these bugs sits one structural problem. Classical sampling algorithms are designed in the <em>Real-RAM</em> model where you can draw a perfectly uniform real number from the unit interval and compute with infinite precision. A physical computer can't do either. It gets a stream of random bits and executes finite-precision arithmetic. The distribution your library actually produces is therefore usually unknown and can differ substantially from the distribution the user specified.</p>
   </div>
 </section>
 
@@ -393,7 +393,7 @@ footer{padding:2.6rem 0 5rem;text-align:center;color:var(--ink-faint);font-size:
   <div class="col">
     <p>Discrete distributions win enormously. At 100,000 samples, Poisson, Binomial, NegBinomial, Hypergeometric and Pascal land between 33&times; and 59&times;. Continuous distributions win modestly, with Beta, Gamma, Chi-square, F and Student's t settling between 1.34&times; and 1.47&times;.</p>
 
-    <p>The reason is structural. A discrete distribution has a limited set of possible answers; a Poisson(5) mostly returns small integers. Thousands of different random routes result into the same handful of endings, hence a stored ending gets reused constantly. A continuous distribution produces a unique value on every draw, so its endings are visited once and never again. Continuous distributions consequently get only the weaker of the two caches, described below.</p>
+    <p>The reason is structural. A discrete distribution has a limited set of possible answers; a Poisson(5) mostly returns small integers. Thousands of different random routes result in the same handful of endings, hence a stored ending gets reused constantly. A continuous distribution produces a unique value on every draw, so its endings are visited once and never again. Continuous distributions consequently get only the weaker of the two caches, described below.</p>
   </div>
 
   <figure>
