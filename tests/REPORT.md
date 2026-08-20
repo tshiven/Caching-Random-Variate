@@ -1,19 +1,5 @@
 # rvg_cache Report: Fully-Automatic API
 
-## What changed from the previous design
-
-The cache no longer has a public handle. There is no `rvg_cache_create`, `rvg_cache_free`, `rvg_cache_stats`, or `rvg_cache_t` in `rvg_cache.h` anymore -- the entire public API is one function:
-
-```c
-double rvg_generate(cdf32_t cdf, struct flip_state *prng, rvg_dist_t dist, int force_unsafe);
-```
-
-Call it exactly like `generate_opt(cdf, prng)`, plus tell it which distribution `cdf` is. The first time a given `cdf` function is passed in, caching state for it is built automatically, internally, and reused on every later call for that same `cdf` -- there is nothing to set up and nothing to tear down. State is cleaned up for you automatically when the process exits normally, via a C `atexit` handler registered the first time any caching state is built; you never call anything to free it.
-
-This is a deliberate simplification for the common case this library is meant to serve: drawing many samples from the same distribution repeatedly, e.g. when training a model. The previous manual API (build a cache, pass it explicitly, inspect its hit-rate stats, free it yourself) is gone, along with the ability to inspect a specific cache's stats or force two independent caches for the exact same distribution+parameters. That's a real trade-off, not a free lunch: pick the manual API back up (it's one commit back in git history) if per-cache introspection or isolation matters more to you than zero-setup convenience.
-
-Internally, the same two memoization mechanisms as before are still used, entirely behind the scenes: a shallow "head cache" memoizing individual CDF evaluations, and (for six discrete distributions) a "tail cache" memoizing whole finished samples once no more randomness remains to be consumed. Both remain fixed-capacity and never grow unbounded -- a full table just stops helping further rather than costing more memory, and correctness is unaffected either way.
-
 ## Methodology
 
 **Accuracy.** For each of the 11 supported distributions, `rvg_generate` is called once per seed from 1 to 10000, with no separate warmup pass -- its internal cache starts cold on seed 1 and matures live as the loop proceeds, exactly how it is actually used. Each call is compared against `generate_opt` run on a separate `gsl_rng` seeded identically: the two `double` results are compared via `memcpy` to `uint64_t` and a raw-bit comparison (never `==`, so NaN/signed-zero divergences would still be caught), and the two `flip_state.num_flips` counters are compared exactly, confirming the cached path consumed exactly the same amount of randomness as the uncached path.
