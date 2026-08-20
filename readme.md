@@ -77,3 +77,41 @@ supported by the library.
   // Free the random number generator.
   gsl_rng_free(rng);
   }
+  ```
+
+Caching layer (`cache/rvg_cache.h`)
+------------------------------------
+
+This fork adds an optional CDF-memoization layer on top of the core
+library, for programs that draw many samples from the same distribution
+repeatedly (e.g. training a model). It does not modify `generate.c`,
+`generate.h`, or any other core file. `rvg_generate` is a drop-in
+replacement for `generate_opt`: sample-for-sample identical, just faster
+on repeated calls.
+
+  ```c
+  #include <gsl/gsl_rng.h>
+  #include "rvg/generate.h"
+  #include "rvg_cache.h"
+
+  int main(int argc, char * argv[]) {
+
+  gsl_rng * rng = gsl_rng_alloc(gsl_rng_default);
+  struct flip_state prng = make_flip_state(rng);
+
+  MAKE_CDF_UINT_P(poisson_cdf, gsl_cdf_poisson_P, 71)
+
+  // Draw many samples from the same CDF -- rvg_generate builds and reuses
+  // its own caching state automatically; there is nothing to set up or
+  // free.
+  for (int i = 0; i < 10000; i++) {
+      double sample = rvg_generate(poisson_cdf, &prng, RVG_DIST_POISSON, 0);
+  }
+
+  gsl_rng_free(rng);
+  }
+  ```
+
+See `cache/rvg_cache.h` for the full API doc comment and
+`tests/REPORT.md` for measured accuracy and speedup numbers across the
+11 supported distributions.

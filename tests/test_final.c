@@ -1,7 +1,9 @@
 /*
   Name:     test_final.c
   Purpose:  Correctness (cold-start, no warmup) and performance validation
-            for the rvg_cache layer, across all 11 distributions it supports.
+            for the rvg_cache layer, across all 11 distributions it supports,
+            using the fully-automatic rvg_generate(cdf, prng, dist,
+            force_unsafe) API -- no manual cache creation/freeing.
   Note:     New file; does not modify any existing file. Compile manually:
               gcc -O3 -DNDEBUG -march=native $(gsl-config --cflags) \
                   -I.. tests/test_final.c cache/rvg_cache.c librvg.a \
@@ -21,6 +23,12 @@
 #include "generate.h"
 #include "flip.h"
 #include "rvg_cache.h"
+
+/* Internal-only hook, not part of the public API (see rvg_cache.c) -- lets
+   this test force a clean slate between measurements, the way this test
+   used to build a brand-new rvg_cache_t by hand. Forward-declared locally
+   since it is deliberately not in rvg_cache.h. */
+extern void rvg_internal_reset_for_testing(void);
 
 /* ------------------------------------------------------------------ */
 /* CDFs under test, matching examples/main.c's MAKE_CDF_* convention.  */
@@ -97,10 +105,10 @@ static double run_baseline(cdf32_t cdf, unsigned long seed, int n) {
     return t1 - t0;
 }
 
+/* Fresh, no-warmup timing: reset all auto-managed cache state first, so this
+   cdf starts genuinely cold, matching the old "brand-new rvg_cache_t" setup. */
 static double run_cached(cdf32_t cdf, rvg_dist_t dist, unsigned long seed, int n) {
-    rvg_status_t status;
-    rvg_cache_t *cache = rvg_cache_create(dist, 0, &status);
-    if (cache == NULL) { return -1.0; }
+    rvg_internal_reset_for_testing();
 
     gsl_rng *r = gsl_rng_alloc(gsl_rng_default);
     gsl_rng_set(r, seed);
@@ -108,12 +116,11 @@ static double run_cached(cdf32_t cdf, rvg_dist_t dist, unsigned long seed, int n
 
     double t0 = now_seconds();
     for (int i = 0; i < n; i++) {
-        rvg_generate(cdf, &p, cache);
+        rvg_generate(cdf, &p, dist, 0);
     }
     double t1 = now_seconds();
 
     gsl_rng_free(r);
-    rvg_cache_free(cache);
     return t1 - t0;
 }
 
@@ -125,11 +132,9 @@ int main(void) {
 
     long cold_mismatches[NUM_DISTS];
     double speedups[NUM_DISTS][NUM_SWEEP_N];
-    int usable[NUM_DISTS];
 
     for (int i = 0; i < NUM_DISTS; i++) {
         cold_mismatches[i] = -1;
-        usable[i] = 0;
         for (int j = 0; j < NUM_SWEEP_N; j++) { speedups[i][j] = -1.0; }
     }
 
@@ -138,14 +143,10 @@ int main(void) {
     for (int i = 0; i < NUM_DISTS; i++) {
         dist_entry_t *d = &DISTS[i];
 
-        rvg_status_t status;
-        rvg_cache_t *cache = rvg_cache_create(d->dist, 0, &status);
-        if (cache == NULL) {
-            printf("%s: rvg_cache_create did NOT return OK (status=%d) -- skipping.\n",
-                   d->name, (int)status);
-            continue;
-        }
-        usable[i] = 1;
+        /* Start each distribution genuinely cold -- no separate warmup pass;
+           rvg_generate builds/matures its internal cache automatically as
+           the seed loop below proceeds, which is how it is actually used. */
+        rvg_internal_reset_for_testing();
 
         long mismatches = 0;
         for (unsigned long seed = 1; seed <= NUM_SEEDS; seed++) {
@@ -160,7 +161,7 @@ int main(void) {
             gsl_rng *r2 = gsl_rng_alloc(gsl_rng_default);
             gsl_rng_set(r2, seed);
             struct flip_state p2 = make_flip_state(r2);
-            double v2 = rvg_generate(d->cdf, &p2, cache);
+            double v2 = rvg_generate(d->cdf, &p2, d->dist, 0);
             unsigned long f2 = p2.num_flips;
             gsl_rng_free(r2);
 
@@ -172,7 +173,6 @@ int main(void) {
             }
         }
 
-        rvg_cache_free(cache);
         cold_mismatches[i] = mismatches;
         printf("%s COLD: %ld/%d mismatches\n", d->name, mismatches, NUM_SEEDS);
     }
@@ -180,7 +180,6 @@ int main(void) {
     printf("\n=== PART 2: Realistic-usage performance sweep ===\n\n");
 
     for (int i = 0; i < NUM_DISTS; i++) {
-        if (!usable[i]) { continue; }
         dist_entry_t *d = &DISTS[i];
 
         for (int j = 0; j < NUM_SWEEP_N; j++) {
@@ -204,12 +203,6 @@ int main(void) {
     int all_zero = 1;
     for (int i = 0; i < NUM_DISTS; i++) {
         dist_entry_t *d = &DISTS[i];
-        if (!usable[i]) {
-            printf("%-16s | %-18s | %10s | %10s | %10s\n",
-                   d->name, "N/A (not OK)", "-", "-", "-");
-            all_zero = 0;
-            continue;
-        }
         if (cold_mismatches[i] != 0) { all_zero = 0; }
         printf("%-16s | %18ld | %9.3fx | %9.3fx | %9.3fx\n",
                d->name, cold_mismatches[i],

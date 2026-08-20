@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Caching an Exact Random Number Generator</title>
+<meta name="description" content="A memoization layer for the Saad-Lee exact sampler: up to 59x faster, byte-identical output, identical randomness consumed.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#132029;
+  --ink-soft:#41535E;
+  --ink-faint:#7A8B95;
+  --paper:#F0F3F5;
+  --paper-raised:#FFFFFF;
+  --rule:#D6DFE4;
+  --rand:#C8871B;
+  --det:#0D6E78;
+  --det-wash:#D5E9EA;
+  --measure:34rem;
+  --wide:64rem;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font-family:"Source Serif 4",Georgia,serif;font-size:1.0625rem;line-height:1.68}
+.wrap{max-width:var(--wide);margin:0 auto;padding:0 1.5rem}
+.col{max-width:var(--measure);margin-left:auto;margin-right:auto}
+h1,h2,h3,.eyebrow,figcaption b,th,.tag,.sec-num{font-family:Archivo,system-ui,sans-serif}
+h1{font-size:clamp(2.3rem,6vw,4rem);font-weight:800;letter-spacing:-.035em;line-height:1.03;margin:0 0 1.1rem}
+h2{font-size:clamp(1.45rem,3.1vw,2rem);font-weight:700;letter-spacing:-.025em;line-height:1.16;margin:0 0 .9rem}
+h3{font-size:1.08rem;font-weight:700;letter-spacing:-.01em;margin:2.2rem 0 .55rem}
+p{margin:0 0 1.15rem}
+a{color:var(--det);text-underline-offset:2px}
+a:hover{color:#0A5A63}
+strong{font-weight:600}
+.eyebrow{font-size:.72rem;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 .7rem}
+.sec{padding:3.6rem 0 1rem;scroll-margin-top:1.5rem}
+.sec-head{max-width:var(--measure);margin:0 auto 1.5rem}
+.sec-num{display:inline-block;font-family:"JetBrains Mono",monospace;font-size:.78rem;color:var(--det);
+  border:1px solid var(--det);border-radius:2px;padding:.1rem .42rem;margin-bottom:.75rem}
+.hero{padding:4.5rem 0 1rem}
+.hero .col{max-width:44rem}
+.hero-sub{font-size:1.26rem;line-height:1.48;color:var(--ink-soft);margin:0 0 2.1rem;max-width:35rem}
+.byline{font-family:"JetBrains Mono",monospace;font-size:.75rem;color:var(--ink-faint);
+  letter-spacing:.03em;border-top:1px solid var(--rule);padding-top:.95rem;margin-top:2.4rem;line-height:1.95}
+.byline a{font-weight:700}
+figure{margin:2.3rem auto;max-width:var(--measure)}
+figure svg{display:block;width:100%;height:auto;background:var(--paper-raised);
+  border:1px solid var(--rule);border-radius:4px}
+figcaption{font-size:.83rem;line-height:1.58;color:var(--ink-faint);margin-top:.75rem;max-width:var(--measure)}
+figcaption b{color:var(--ink-soft);font-weight:700}
+code{font-family:"JetBrains Mono",monospace;font-size:.86em;background:#E4EBEE;padding:.08em .32em;
+  border-radius:3px;color:#0B4D55}
+.deep{max-width:var(--measure);margin:1.8rem auto;padding:1.05rem 1.2rem;background:var(--paper-raised);
+  border-left:3px solid var(--det);border-radius:0 4px 4px 0;font-size:.95rem;line-height:1.62}
+.deep .tag{display:block;font-size:.68rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--det);margin-bottom:.5rem}
+.deep p:last-child{margin-bottom:0}
+.callout{max-width:var(--measure);margin:1.8rem auto;padding:1.15rem 1.3rem;background:var(--det);
+  color:#EAF6F7;border-radius:4px;font-size:1.04rem;line-height:1.55}
+.callout p{margin:0}
+.tbl{max-width:var(--measure);margin:1.8rem auto;overflow-x:auto}
+.tbl-cap{max-width:var(--measure);margin:.75rem auto 0;font-size:.83rem;line-height:1.58;color:var(--ink-faint)}
+.tbl-cap b{color:var(--ink-soft);font-weight:700;font-family:Archivo,sans-serif}
+table{border-collapse:collapse;width:100%;font-size:.86rem;background:var(--paper-raised)}
+th,td{padding:.55rem .7rem;border-bottom:1px solid var(--rule);text-align:right;vertical-align:top}
+th{font-size:.69rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);
+  background:#F6F9FA;text-align:right}
+th:first-child,td:first-child{text-align:left}
+td.l,th.l{text-align:left}
+td.num{font-family:"JetBrains Mono",monospace;font-size:.81rem}
+td .zero{color:var(--det);font-weight:700}
+.pill{display:inline-block;font-size:.62rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  padding:.14rem .42rem;border-radius:2px;font-family:Archivo,sans-serif}
+.pill.both{background:var(--det-wash);color:#0A5A63}
+.pill.head{background:#E8EDEF;color:#6B7C85}
+tr.hi td{background:#F4FAFA}
+.note{max-width:var(--measure);margin:0 auto 1.15rem;font-size:.85rem;color:var(--ink-faint);line-height:1.55}
+ul,ol{max-width:var(--measure);margin:0 auto 1.25rem;padding-left:1.25rem}
+li{margin-bottom:.6rem}
+.refs{max-width:var(--measure);margin:0 auto;font-size:.92rem;line-height:1.58}
+.refs li{margin-bottom:1rem}
+hr{border:0;border-top:1px solid var(--rule);max-width:var(--wide);margin:3rem auto}
+footer{padding:2.6rem 0 5rem;text-align:center;color:var(--ink-faint);font-size:.78rem;
+  font-family:"JetBrains Mono",monospace;line-height:2}
+@media (max-width:640px){
+  body{font-size:1rem}.sec{padding:2.5rem 0 .5rem}.hero{padding:3rem 0 1rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<main>
+
+<!-- ================= HERO ================= -->
+<header class="hero wrap">
+  <div class="col">
+    <p class="eyebrow">Numerical methods &middot; Probabilistic computing</p>
+    <h1>Caching an exact<br>random number generator</h1>
+    <p class="hero-sub">A memoization layer for the Saad&ndash;Lee sampler that runs up to 59&times; faster, produces byte-identical output, and spends exactly the same random bits.</p>
+  </div>
+
+  <div class="col">
+    <p class="byline">
+      Code: <a href="https://github.com/tshiven/Caching-Random-Variate">github.com/tshiven/Caching-Random-Variate</a><br>
+      Built on <a href="https://github.com/probsys/librvg">librvg</a> by Feras&nbsp;A.&nbsp;Saad and Wonyeol&nbsp;Lee
+    </p>
+  </div>
+</header>
+
+<!-- ================= 01 ================= -->
+<section class="sec wrap" id="why">
+  <div class="sec-head">
+    <span class="sec-num">01</span>
+    <h2>The randomness that isn't truly random</h2>
+  </div>
+  <div class="col">
+    <p>Most programming languages have a function that hands you a random number from a given distribution. Nevertheless, almost none of them give you a truly random number.</p>
+
+    <p>Instead you get an approximation: a curve with gaps where certain values can never appear, and tails that thin out at a different rate than the math prescribes. It comes from pushing a uniform number through arithmetic that inherits rounding errors at every step.</p>
+
+    <p>In most software the difference is unmeasurable, but there are applications where that difference is the entire problem.</p>
+
+    <p>Machine learning and simulations are the everyday version. Training runs and test simulations often can't be reproduced because the random seed behaviour depends on the machine.</p>
+
+    <p>Cryptography raises the stakes further: a key generator with even a faint bias makes it more vulnerable, and floating-point rounding often introduces such biases.</p>
+
+    <p>Underneath all of these bugs sits one structural problem. Classical sampling algorithms are designed in the <em>Real-RAM</em> model where you can draw a perfectly uniform real number from the unit interval and compute with infinite precision. A physical computer can't do either. It gets a stream of random bits and executes finite-precision arithmetic. The distribution your library actually produces is therefore usually unknown and much different from the distribution expected from the machine.</p>
+  </div>
+</section>
+
+<!-- ================= 02 ================= -->
+<section class="sec wrap" id="cdf">
+  <div class="sec-head">
+    <span class="sec-num">02</span>
+    <h2>Sampling straight from the CDF</h2>
+  </div>
+  <div class="col">
+    <p>Feras Saad and Wonyeol Lee took a different route to this problem. Rather than repairing samplers one distribution at a time, they changed what the user gives the library in the first place. They published both the method and a C implementation of it, <strong>librvg</strong>. Everything in this article is a layer sitting on top of what they built.</p>
+
+    <p>In their approach you supply one thing: a finite-precision program that computes the distribution's CDF, a function returning the fraction of samples landing at or below a given point. From that alone, a generator is synthesized for you.</p>
+
+    <p>Here are the guarantees provided:</p>
+
+    <ul>
+      <li><strong>It is exact.</strong> The generator's distribution provably matches the CDF you wrote, at the precision you wrote it in.</li>
+      <li><strong>It is entropy-optimal.</strong> It consumes the smallest possible average number of random bits per sample. This is a hard floor set by information theory, so no algorithm can do better.</li>
+      <li><strong>It needs no arbitrary-precision arithmetic and cannot overflow.</strong> It works in whatever binary format the CDF uses.</li>
+      <li><strong>Its API is self-consistent.</strong> Generator, survival function and quantile function all derive from the same CDF, so they agree with each other by construction rather than by careful maintenance.</li>
+    </ul>
+  </div>
+
+  <div class="callout">
+    <p>Describe the distribution once, as a CDF. The exact sampler is generated for you.</p>
+  </div>
+
+  <div class="col">
+    <h3>How the sampler walks</h3>
+    <p>The algorithm narrows the answer down one bit at a time. It asks, repeatedly, "is the answer in the lower or upper half?", and each answer fixes one more bit of the result. A <code>double</code> carries 64 bits, so a sample takes up to 64 rounds.</p>
+    <p>You might expect every round also costs a coin flip, since each one is deciding left or right. Surprisingly, it doesn't. Some rounds get decided by the CDF value alone, no randomness needed, and that gap is what the rest of this article is built around.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Six rounds of interval halving, each evaluating the CDF at a midpoint, keeping one half, and fixing one bit">
+      <text x="26" y="30" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 1. ONE SAMPLE, FIRST SIX ROUNDS</text>
+      <text x="26" y="62" font-family="Archivo, sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#7A8B95">ROUND</text>
+      <text x="694" y="62" font-family="Archivo, sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#7A8B95">DECIDED BY</text>
+      <text x="934" y="62" text-anchor="end" font-family="Archivo, sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#7A8B95">BITS FIXED SO FAR</text>
+
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <text x="26" y="94" fill="#41535E">l = 0</text>
+        <rect x="140" y="81" width="520" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="400" y="81" width="260" height="18" rx="2" fill="#F6E9CE"/>
+        <line x1="400" y1="75" x2="400" y2="105" stroke="#C8871B" stroke-width="2.2"/>
+        <text x="694" y="94" fill="#8A5E10">coin flip</text>
+        <text x="934" y="94" text-anchor="end" fill="#132029" font-weight="700">1</text>
+
+        <text x="26" y="134" fill="#41535E">l = 1</text>
+        <rect x="400" y="121" width="260" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="400" y="121" width="130" height="18" rx="2" fill="#F6E9CE"/>
+        <line x1="530" y1="115" x2="530" y2="145" stroke="#C8871B" stroke-width="2.2"/>
+        <text x="694" y="134" fill="#8A5E10">coin flip</text>
+        <text x="934" y="134" text-anchor="end" fill="#132029" font-weight="700">10</text>
+
+        <text x="26" y="174" fill="#41535E">l = 2</text>
+        <rect x="400" y="161" width="130" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="400" y="161" width="65" height="18" rx="2" fill="#F6E9CE"/>
+        <line x1="465" y1="155" x2="465" y2="185" stroke="#C8871B" stroke-width="2.2"/>
+        <text x="694" y="174" fill="#8A5E10">coin flip</text>
+        <text x="934" y="174" text-anchor="end" fill="#132029" font-weight="700">100</text>
+
+        <text x="26" y="214" fill="#41535E">l = 3</text>
+        <rect x="400" y="201" width="65" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="432.5" y="201" width="32.5" height="18" rx="2" fill="#F6E9CE"/>
+        <line x1="432.5" y1="195" x2="432.5" y2="225" stroke="#C8871B" stroke-width="2.2"/>
+        <text x="694" y="214" fill="#8A5E10">coin flip</text>
+        <text x="934" y="214" text-anchor="end" fill="#132029" font-weight="700">1001</text>
+
+        <text x="26" y="254" fill="#41535E">l = 4</text>
+        <rect x="432.5" y="241" width="32.5" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="432.5" y="241" width="16.25" height="18" rx="2" fill="#D5E9EA"/>
+        <line x1="448.75" y1="235" x2="448.75" y2="265" stroke="#0D6E78" stroke-width="2.2"/>
+        <text x="694" y="254" fill="#0A5A63">forced, no coin</text>
+        <text x="934" y="254" text-anchor="end" fill="#132029" font-weight="700">10010</text>
+
+        <text x="26" y="294" fill="#41535E">l = 5</text>
+        <rect x="432.5" y="281" width="16.25" height="18" rx="2" fill="#E5EBEE"/>
+        <rect x="432.5" y="281" width="8.13" height="18" rx="2" fill="#D5E9EA"/>
+        <line x1="440.63" y1="275" x2="440.63" y2="305" stroke="#0D6E78" stroke-width="2.2"/>
+        <text x="694" y="294" fill="#0A5A63">forced, no coin</text>
+        <text x="934" y="294" text-anchor="end" fill="#132029" font-weight="700">100100</text>
+      </g>
+
+      <line x1="140" y1="328" x2="660" y2="328" stroke="#D6DFE4"/>
+      <text x="140" y="347" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">lowest possible output</text>
+      <text x="660" y="347" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">highest possible output</text>
+
+      <text x="140" y="382" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">Grey marks the interval still in play. Tinted marks the half that gets kept. The vertical tick is where the CDF is evaluated.</text>
+      <text x="140" y="400" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">After 64 rounds the interval holds exactly one value, and that value is the sample.</text>
+    </svg>
+    <figcaption><b>Fig 1.</b> Gold rounds spent a coin flip. Teal rounds did not need one, because the arithmetic already determined which half to keep, so the bit came out free. Saad and Lee prove that deciding this costs only constant work per round.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>Why would a round come out free? Sometimes all the remaining probability sits on one side of the midpoint. Other times the two sides are distinguishable from bits of earlier rounds. In both cases, the generator moves on without consuming randomness, which is why the method is entropy-optimal.</p>
+  </div>
+
+  <div class="deep">
+    <span class="tag">Under the hood</span>
+    <p>The method's ancestor is Knuth&ndash;Yao (1976) which builds a discrete distribution generating tree and is entropy-optimal, but requires creating a tree of exponential size. Saad and Lee's contribution is proving the tree never has to exist. A single sample only needs one root-to-leaf path, and every node on that path can be recomputed from the CDF the moment it's needed. Hence, nothing needs to be stored in advance. Their results go further and remove Knuth&ndash;Yao's preprocessing pass too. A depth-<em>k</em> walk therefore costs O(<em>k</em>) work and O(1) memory per level, over a distribution that may have 2<sup>64</sup> possible outcomes.</p>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead>
+        <tr>
+          <th class="l">&nbsp;</th>
+          <th class="l">Knuth&ndash;Yao (1976)</th>
+          <th class="l">Column-wise Knuth&ndash;Yao</th>
+          <th class="l">Saad&ndash;Lee (2025)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>What you supply</td>
+          <td class="l">An explicit list of outcome probabilities</td>
+          <td class="l">The same list written as a probability matrix</td>
+          <td class="l">A CDF function</td>
+        </tr>
+        <tr>
+          <td>What gets stored</td>
+          <td class="l">The entire generating tree</td>
+          <td class="l">The matrix; one tree level rebuilt at a time from one column</td>
+          <td class="l">Only the single path being walked</td>
+        </tr>
+        <tr>
+          <td>Space</td>
+          <td class="l num">O(2<sup>L</sup>)</td>
+          <td class="l num">O(N &middot; L)</td>
+          <td class="l num">O(1) per level</td>
+        </tr>
+        <tr>
+          <td>Work per sample</td>
+          <td class="l num">O(k&sup2;) beyond the flips</td>
+          <td class="l num">O(N) per level</td>
+          <td class="l num">O(k) total</td>
+        </tr>
+        <tr>
+          <td>Coin flips per sample</td>
+          <td class="l num">H(P) to H(P)+2</td>
+          <td class="l num">H(P) to H(P)+2</td>
+          <td class="l num">H(P) to H(P)+2</td>
+        </tr>
+        <tr class="hi">
+          <td>Over 2<sup>64</sup> outcomes</td>
+          <td class="l">Impractical</td>
+          <td class="l">Impractical</td>
+          <td class="l">The design target</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="tbl-cap"><b>Table 1.</b> <em>L</em> is the bit-precision of each probability, <em>N</em> the number of distinct outcomes, <em>k</em> the depth walked, and <em>H(P)</em> the Shannon entropy, the minimum flips per sample. All three reach that floor; they differ in bookkeeping and memory.</p>
+  </div>
+
+  <div class="col">
+    <p>So the coin flips are already optimal and cannot be improved on. There is, however, room for improvement elsewhere.</p>
+  </div>
+</section>
+
+<!-- ================= 03 ================= -->
+<section class="sec wrap" id="cost">
+  <div class="sec-head">
+    <span class="sec-num">03</span>
+    <h2>The other cost: all those CDF calls</h2>
+  </div>
+  <div class="col">
+    <p>Entropy-optimal does not mean fast. It means frugal with randomness. The runtime is dominated by something else: up to 64 CDF evaluations for every single sample.</p>
+
+    <p>A Gaussian CDF is cheap, a single call to a well-behaved function. A Beta CDF is not: it has no closed form, so evaluating it means running an internal iterative computation until it converges. A Poisson CDF is a running sum, with more terms as the parameter grows. A hypergeometric CDF drags in factorials. These aren't one arithmetic operation, they are small numerical algorithms, and the sampler calls one of them at every single round, dozens of times per sample.</p>
+
+    <p>That cost adds up fast, and is often neglected. A Bayesian neural network does not learn one fixed value for each weight. Instead it learns a distribution of possible values, and each time the network runs it samples a new weight from that distribution. During every training run, the network repeatedly samples from the same set of learned distributions. A reinforcement learning agent explores its environment by adding random noise to the action it would otherwise take, and that noise comes from a fixed distribution, sampled again at every step.</p>
+
+    <p>A diffusion model, like the ones behind image generators, works in a similar repetitive way. It starts with pure noise and gradually turns that noise into an image over dozens or even hundreds of steps. At each step, it samples according to a distribution determined by the same fixed noise schedule.</p>
+  </div>
+
+  <div class="callout">
+    <p>Across all those repeated calls to one fixed distribution, how much of that work is repetitive?</p>
+  </div>
+
+  <div class="col">
+    <p>Most of it, and it repeats in two structurally different ways. This is why the method uses two caches rather than one. The first saves individual CDF calls. The second skips whole samples. Both live in an add-on library, <code>rvg_cache</code>, that leaves librvg untouched, reached through a single function dropped in where the original call used to be.</p>
+
+    <h3>When it pays off</h3>
+    <p>Caching earns its keep when a workload has three properties.</p>
+
+    <ul>
+      <li><strong>Many samples from one fixed distribution.</strong> Building a cache costs a small fixed amount of time on the very first call, and that cost has to be earned back by saving on later calls. For most distributions it's earned back almost immediately, somewhere between 10 and 25 samples. Geometric is the outlier at roughly 200, since its CDF is cheap enough that there is little per-sample cost to recover.</li>
+      <li><strong>Parameters that hold still.</strong> Change a shape parameter and you have a different CDF, which means a different cache starting from empty.</li>
+      <li><strong>An expensive CDF.</strong> The whole trade is memory for CDF calls, so a CDF that costs three arithmetic operations has nothing worth saving.</li>
+    </ul>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Dot chart of breakeven sample count per distribution; ten cluster between 10 and 25 samples, Geometric sits alone near 200">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 2. SAMPLES NEEDED BEFORE CACHING WINS</text>
+
+      <g stroke="#E5EBEE" stroke-width="1">
+        <line x1="261.7" y1="76" x2="261.7" y2="342"/>
+        <line x1="373.5" y1="76" x2="373.5" y2="342"/>
+        <line x1="521.2" y1="76" x2="521.2" y2="342"/>
+        <line x1="632.9" y1="76" x2="632.9" y2="342"/>
+      </g>
+      <g font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7" text-anchor="middle">
+        <text x="261.7" y="372">10</text><text x="373.5" y="372">20</text><text x="521.2" y="372">50</text>
+        <text x="632.9" y="372">100</text><text x="744.6" y="372">200</text>
+      </g>
+      <text x="500" y="396" text-anchor="middle" font-family="Archivo, sans-serif" font-size="11" font-weight="700" letter-spacing=".06em" fill="#7A8B95">SAMPLES DRAWN BEFORE CACHING BECOMES FASTER (LOG SCALE)</text>
+
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <text x="240" y="92" text-anchor="end" fill="#41535E">BETA</text>
+        <circle cx="261.7" cy="88" r="5" fill="#B6C4CC"/><text x="276" y="92" fill="#9DAEB7">10</text>
+
+        <text x="240" y="118" text-anchor="end" fill="#41535E">CHISQUARE</text>
+        <circle cx="261.7" cy="114" r="5" fill="#B6C4CC"/><text x="276" y="118" fill="#9DAEB7">10</text>
+
+        <text x="240" y="144" text-anchor="end" fill="#41535E">GAMMA</text>
+        <circle cx="261.7" cy="140" r="5" fill="#B6C4CC"/><text x="276" y="144" fill="#9DAEB7">10</text>
+
+        <text x="240" y="170" text-anchor="end" fill="#41535E">FDIST</text>
+        <circle cx="327.1" cy="166" r="5" fill="#B6C4CC"/><text x="341" y="170" fill="#9DAEB7">15</text>
+
+        <text x="240" y="196" text-anchor="end" fill="#41535E">TDIST</text>
+        <circle cx="327.1" cy="192" r="5" fill="#B6C4CC"/><text x="341" y="196" fill="#9DAEB7">15</text>
+
+        <text x="240" y="222" text-anchor="end" fill="#132029">POISSON</text>
+        <circle cx="327.1" cy="218" r="5" fill="#0D6E78"/><text x="341" y="222" fill="#41535E">15</text>
+
+        <text x="240" y="248" text-anchor="end" fill="#132029">BINOMIAL</text>
+        <circle cx="373.5" cy="244" r="5" fill="#0D6E78"/><text x="388" y="248" fill="#41535E">20</text>
+
+        <text x="240" y="274" text-anchor="end" fill="#132029">HYPERGEOMETRIC</text>
+        <circle cx="409.4" cy="270" r="5" fill="#0D6E78"/><text x="424" y="274" fill="#41535E">25</text>
+
+        <text x="240" y="300" text-anchor="end" fill="#132029">NEGBINOMIAL</text>
+        <circle cx="409.4" cy="296" r="5" fill="#0D6E78"/><text x="424" y="300" fill="#41535E">25</text>
+
+        <text x="240" y="326" text-anchor="end" fill="#132029">PASCAL</text>
+        <circle cx="409.4" cy="322" r="5" fill="#0D6E78"/><text x="424" y="326" fill="#41535E">25</text>
+
+        <text x="240" y="352" text-anchor="end" fill="#132029">GEOMETRIC</text>
+        <circle cx="744.6" cy="348" r="5" fill="#0D6E78"/><text x="759" y="352" fill="#41535E">200</text>
+      </g>
+    </svg>
+    <figcaption><b>Fig 2.</b> Teal marks distributions with both caches, grey marks head-cache-only. Geometric is the sole outlier: its uncached generator is already close to free, about a microsecond per sample, so there is very little cost for the cache to recover and it takes far longer to repay its own setup.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>In practice this means caching almost never costs you anything. Even a modest workload of a few dozen samples is already on the profitable side.</p>
+  </div>
+</section>
+
+<!-- ================= 04 ================= -->
+<section class="sec wrap" id="which">
+  <div class="sec-head">
+    <span class="sec-num">04</span>
+    <h2>Which distributions benefit, and why</h2>
+  </div>
+  <div class="col">
+    <p>Discrete distributions win enormously. At 100,000 samples, Poisson, Binomial, NegBinomial, Hypergeometric and Pascal land between 33&times; and 59&times;. Continuous distributions win modestly, with Beta, Gamma, Chi-square, F and Student's t settling between 1.34&times; and 1.47&times;.</p>
+
+    <p>The reason is structural. A discrete distribution has a limited set of possible answers; a Poisson(5) mostly returns small integers. Thousands of different random routes result into the same handful of endings, hence a stored ending gets reused constantly. A continuous distribution produces a unique value on every draw, so its endings are visited once and never again. Continuous distributions consequently get only the weaker of the two caches, described below.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 476" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Speedup by distribution on a logarithmic scale: continuous distributions near 1.4x, discrete between 5x and 59x">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 3. SPEEDUP AT 100,000 SAMPLES (LOG SCALE)</text>
+
+      <g stroke="#E5EBEE" stroke-width="1">
+        <line x1="170" y1="50" x2="170" y2="408"/>
+        <line x1="278.4" y1="50" x2="278.4" y2="408"/>
+        <line x1="421.6" y1="50" x2="421.6" y2="408"/>
+        <line x1="529.9" y1="50" x2="529.9" y2="408"/>
+        <line x1="638.3" y1="50" x2="638.3" y2="408"/>
+        <line x1="810" y1="50" x2="810" y2="408"/>
+      </g>
+      <g font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7" text-anchor="middle">
+        <text x="170" y="426">1×</text><text x="278.4" y="426">2×</text><text x="421.6" y="426">5×</text>
+        <text x="529.9" y="426">10×</text><text x="638.3" y="426">20×</text><text x="810" y="426">60×</text>
+      </g>
+
+      <rect x="26" y="58" width="3" height="148" fill="#B6C4CC"/>
+      <text x="650" y="72" font-family="Archivo, sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#7A8B95">CONTINUOUS</text>
+      <text x="650" y="87" font-family="Source Serif 4, serif" font-size="11" fill="#9DAEB7">head cache only</text>
+
+      <rect x="26" y="220" width="3" height="180" fill="#0D6E78"/>
+      <text x="650" y="208" font-family="Archivo, sans-serif" font-size="10" font-weight="700" letter-spacing=".08em" fill="#0D6E78">DISCRETE</text>
+      <text x="650" y="223" font-family="Source Serif 4, serif" font-size="11" fill="#41535E">head + tail cache</text>
+
+      <g font-family="JetBrains Mono, monospace" font-size="11">
+        <text x="160" y="74" text-anchor="end" fill="#41535E">GAMMA</text>
+        <rect x="170" y="62" width="45.9" height="17" rx="2" fill="#B6C4CC"/>
+        <text x="224" y="74" fill="#7A8B95">1.341×</text>
+
+        <text x="160" y="100" text-anchor="end" fill="#41535E">CHISQUARE</text>
+        <rect x="170" y="88" width="50.3" height="17" rx="2" fill="#B6C4CC"/>
+        <text x="228" y="100" fill="#7A8B95">1.380×</text>
+
+        <text x="160" y="126" text-anchor="end" fill="#41535E">TDIST</text>
+        <rect x="170" y="114" width="50.5" height="17" rx="2" fill="#B6C4CC"/>
+        <text x="228" y="126" fill="#7A8B95">1.381×</text>
+
+        <text x="160" y="152" text-anchor="end" fill="#41535E">FDIST</text>
+        <rect x="170" y="140" width="57.4" height="17" rx="2" fill="#B6C4CC"/>
+        <text x="235" y="152" fill="#7A8B95">1.444×</text>
+
+        <text x="160" y="178" text-anchor="end" fill="#41535E">BETA</text>
+        <rect x="170" y="166" width="60.3" height="17" rx="2" fill="#B6C4CC"/>
+        <text x="238" y="178" fill="#7A8B95">1.471×</text>
+
+        <text x="160" y="238" text-anchor="end" fill="#132029">GEOMETRIC</text>
+        <rect x="170" y="226" width="257.6" height="17" rx="2" fill="#5FA6AC"/>
+        <text x="436" y="238" fill="#41535E">5.197×</text>
+
+        <text x="160" y="264" text-anchor="end" fill="#132029">HYPERGEOMETRIC</text>
+        <rect x="170" y="252" width="547.8" height="17" rx="2" fill="#0D6E78"/>
+        <text x="726" y="264" fill="#41535E">33.260×</text>
+
+        <text x="160" y="290" text-anchor="end" fill="#132029">PASCAL</text>
+        <rect x="170" y="278" width="566.4" height="17" rx="2" fill="#0D6E78"/>
+        <text x="745" y="290" fill="#41535E">37.465×</text>
+
+        <text x="160" y="316" text-anchor="end" fill="#132029">NEGBINOMIAL</text>
+        <rect x="170" y="304" width="604.6" height="17" rx="2" fill="#0D6E78"/>
+        <text x="783" y="316" fill="#41535E">47.843×</text>
+
+        <text x="160" y="342" text-anchor="end" fill="#132029">BINOMIAL</text>
+        <rect x="170" y="330" width="620.5" height="17" rx="2" fill="#0D6E78"/>
+        <text x="799" y="342" fill="#41535E">52.952×</text>
+
+        <text x="160" y="368" text-anchor="end" fill="#132029" font-weight="700">POISSON</text>
+        <rect x="170" y="356" width="638.7" height="17" rx="2" fill="#0A5A63"/>
+        <text x="817" y="368" fill="#132029" font-weight="700">59.512×</text>
+      </g>
+
+      <text x="170" y="458" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">Median of five runs, each with an independent seed and a cold cache.</text>
+    </svg>
+    <figcaption><b>Fig 3.</b></figcaption>
+  </figure>
+
+  <div class="tbl">
+    <table>
+      <thead>
+        <tr>
+          <th class="l">Distribution</th>
+          <th class="l">Caches</th>
+          <th>Breakeven N</th>
+          <th>Speedup @ 2,000</th>
+          <th>Speedup @ 100,000</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>BETA</td><td class="l"><span class="pill head">head</span></td><td class="num">10</td><td class="num">1.356×</td><td class="num">1.471×</td></tr>
+        <tr><td>CHISQUARE</td><td class="l"><span class="pill head">head</span></td><td class="num">10</td><td class="num">1.270×</td><td class="num">1.380×</td></tr>
+        <tr><td>GAMMA</td><td class="l"><span class="pill head">head</span></td><td class="num">10</td><td class="num">1.226×</td><td class="num">1.341×</td></tr>
+        <tr><td>FDIST</td><td class="l"><span class="pill head">head</span></td><td class="num">15</td><td class="num">1.323×</td><td class="num">1.444×</td></tr>
+        <tr><td>TDIST</td><td class="l"><span class="pill head">head</span></td><td class="num">15</td><td class="num">1.375×</td><td class="num">1.381×</td></tr>
+        <tr><td>POISSON</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">15</td><td class="num">16.020×</td><td class="num"><strong>59.512×</strong></td></tr>
+        <tr><td>BINOMIAL</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">20</td><td class="num">21.059×</td><td class="num">52.952×</td></tr>
+        <tr><td>NEGBINOMIAL</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">25</td><td class="num">20.913×</td><td class="num">47.843×</td></tr>
+        <tr><td>PASCAL</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">25</td><td class="num">17.364×</td><td class="num">37.465×</td></tr>
+        <tr><td>HYPERGEOMETRIC</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">25</td><td class="num">21.819×</td><td class="num">33.260×</td></tr>
+        <tr><td>GEOMETRIC</td><td class="l"><span class="pill both">head + tail</span></td><td class="num">200</td><td class="num">3.860×</td><td class="num">5.197×</td></tr>
+      </tbody>
+    </table>
+    <p class="tbl-cap"><b>Table 2.</b> Breakeven is the smallest sample count at which the median speedup crosses 1.0&times; and stays there. Below roughly 20 samples the measured times are single-digit microseconds, so treat those figures as accurate to within a few samples rather than exact.</p>
+  </div>
+
+  <div class="col">
+    <p>Ten distributions are deliberately absent. Gaussian, exponential, lognormal, Cauchy, Laplace and logistic were measured and caching didn't reliably help, so the library skips it unless you override. Rayleigh, Pareto, Weibull and Gumbel are correctness-tested but never speed-tested.</p>
+
+    <p>The gains do not grow forever either. Pushing the sweep past 100,000 samples, the tail-cached distributions level off rather than continuing to climb, since both tables eventually fill and there is no room left to store anything new. Poisson holds near 59&times; through a million samples.</p>
+
+    <p>Every sample, regardless of distribution, starts from the same place: the CDF gets evaluated at a midpoint computed only from the bit path <code>b</code> and the depth <code>l</code>. Same path, same depth, hence same answer. And paths overlap heavily near the root. Every sample tests the same first midpoint, half share the second, a quarter share the third. Only as depth grows does the tree fan out into genuinely unique territory.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 330" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Tree of sample paths showing heavy overlap near the root and divergence with depth">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 4. WHY THE SAME WORK KEEPS COMING BACK</text>
+
+      <rect x="90" y="48" width="600" height="118" fill="#D5E9EA" opacity="0.55" rx="3"/>
+      <text x="706" y="88" font-family="Archivo, sans-serif" font-size="13" font-weight="700" fill="#0D6E78">worth caching</text>
+      <text x="706" y="107" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">few distinct states,</text>
+      <text x="706" y="123" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">every sample passes through</text>
+
+      <text x="706" y="236" font-family="Archivo, sans-serif" font-size="13" font-weight="700" fill="#7A8B95">not worth it</text>
+      <text x="706" y="255" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">nearly every state</text>
+      <text x="706" y="271" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">seen once, ever</text>
+
+      <g stroke="#0D6E78" fill="none" stroke-width="2.6"><path d="M390 58 L390 96"/></g>
+      <g stroke="#0D6E78" fill="none" stroke-width="2" opacity=".8">
+        <path d="M390 96 L250 134"/><path d="M390 96 L530 134"/></g>
+      <g stroke="#0D6E78" fill="none" stroke-width="1.5" opacity=".62">
+        <path d="M250 134 L180 172"/><path d="M250 134 L320 172"/>
+        <path d="M530 134 L460 172"/><path d="M530 134 L600 172"/></g>
+      <g stroke="#8FA4AE" fill="none" stroke-width="1.05" opacity=".55">
+        <path d="M180 172 L145 210"/><path d="M180 172 L215 210"/>
+        <path d="M320 172 L285 210"/><path d="M320 172 L355 210"/>
+        <path d="M460 172 L425 210"/><path d="M460 172 L495 210"/>
+        <path d="M600 172 L565 210"/><path d="M600 172 L635 210"/></g>
+      <g stroke="#B6C4CC" fill="none" stroke-width=".8" opacity=".7">
+        <path d="M145 210 L128 248"/><path d="M145 210 L162 248"/>
+        <path d="M215 210 L198 248"/><path d="M215 210 L232 248"/>
+        <path d="M285 210 L268 248"/><path d="M285 210 L302 248"/>
+        <path d="M355 210 L338 248"/><path d="M355 210 L372 248"/>
+        <path d="M425 210 L408 248"/><path d="M425 210 L442 248"/>
+        <path d="M495 210 L478 248"/><path d="M495 210 L512 248"/>
+        <path d="M565 210 L548 248"/><path d="M565 210 L582 248"/>
+        <path d="M635 210 L618 248"/><path d="M635 210 L652 248"/></g>
+      <g stroke="#C9D5DB" fill="none" stroke-width=".6" opacity=".75">
+        <path d="M128 248 L120 286"/><path d="M128 248 L136 286"/>
+        <path d="M162 248 L154 286"/><path d="M162 248 L170 286"/>
+        <path d="M198 248 L190 286"/><path d="M198 248 L206 286"/>
+        <path d="M232 248 L224 286"/><path d="M232 248 L240 286"/>
+        <path d="M268 248 L260 286"/><path d="M268 248 L276 286"/>
+        <path d="M302 248 L294 286"/><path d="M302 248 L310 286"/>
+        <path d="M338 248 L330 286"/><path d="M338 248 L346 286"/>
+        <path d="M372 248 L364 286"/><path d="M372 248 L380 286"/>
+        <path d="M408 248 L400 286"/><path d="M408 248 L416 286"/>
+        <path d="M442 248 L434 286"/><path d="M442 248 L450 286"/>
+        <path d="M478 248 L470 286"/><path d="M478 248 L486 286"/>
+        <path d="M512 248 L504 286"/><path d="M512 248 L520 286"/>
+        <path d="M548 248 L540 286"/><path d="M548 248 L556 286"/>
+        <path d="M582 248 L574 286"/><path d="M582 248 L590 286"/>
+        <path d="M618 248 L610 286"/><path d="M618 248 L626 286"/>
+        <path d="M652 248 L644 286"/><path d="M652 248 L660 286"/></g>
+
+      <g font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7" text-anchor="end">
+        <text x="76" y="62">l=0</text><text x="76" y="100">l=1</text><text x="76" y="138">l=2</text>
+        <text x="76" y="176">l=3</text><text x="76" y="214">l=4</text><text x="76" y="252">l=5</text>
+        <text x="76" y="290">l=6</text>
+      </g>
+      <g fill="#0D6E78">
+        <circle cx="390" cy="58" r="4"/><circle cx="390" cy="96" r="3.5"/>
+        <circle cx="250" cy="134" r="3"/><circle cx="530" cy="134" r="3"/>
+      </g>
+    </svg>
+    <figcaption><b>Fig 4.</b> Every sample walks this tree from the top. Near the root only a handful of distinct <code>(b, l)</code> states exist and every draw passes through them, so one stored CDF value gets reused thousands of times.</figcaption>
+  </figure>
+
+  <div class="col">
+    <p>That overlap at the top of the tree is the <strong>head cache</strong>: a hash table keyed on <code>(b, l)</code>, holding the CDF value. It has 65,536 slots and never resizes or evicts. A key hashes to a slot; if occupied, the lookup checks up to five more; if all six are taken by other keys, it gives up and calls the CDF directly.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A key hashing into a table and checking up to six consecutive slots">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 5. THE SIX-SLOT SEARCH WINDOW</text>
+
+      <defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#0D6E78"/></marker></defs>
+      <text x="26" y="72" font-family="JetBrains Mono, monospace" font-size="12" fill="#132029">key (b, l)</text>
+      <path d="M108 66 C 168 66, 196 66, 228 94" stroke="#0D6E78" stroke-width="1.5" fill="none" marker-end="url(#ar)"/>
+      <text x="132" y="54" font-family="Source Serif 4, serif" font-size="12" fill="#0D6E78">hash</text>
+
+      <g font-family="JetBrains Mono, monospace" font-size="10">
+        <rect x="80" y="102" width="66" height="44" rx="3" fill="#E5EBEE" stroke="#D6DFE4"/>
+        <text x="113" y="129" text-anchor="middle" fill="#9DAEB7">4211</text>
+        <rect x="152" y="102" width="66" height="44" rx="3" fill="#E5EBEE" stroke="#D6DFE4"/>
+        <text x="185" y="129" text-anchor="middle" fill="#9DAEB7">4212</text>
+
+        <rect x="224" y="96" width="414" height="56" rx="4" fill="none" stroke="#0D6E78" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+        <rect x="230" y="102" width="62" height="44" rx="3" fill="#F6E9CE" stroke="#C8871B"/>
+        <text x="261" y="123" text-anchor="middle" fill="#8A5E10">4213</text>
+        <text x="261" y="137" text-anchor="middle" fill="#8A5E10" font-size="9">taken</text>
+
+        <rect x="298" y="102" width="62" height="44" rx="3" fill="#F6E9CE" stroke="#C8871B"/>
+        <text x="329" y="123" text-anchor="middle" fill="#8A5E10">4214</text>
+        <text x="329" y="137" text-anchor="middle" fill="#8A5E10" font-size="9">taken</text>
+
+        <rect x="366" y="102" width="62" height="44" rx="3" fill="#D5E9EA" stroke="#0D6E78" stroke-width="2"/>
+        <text x="397" y="123" text-anchor="middle" fill="#0A5A63" font-weight="700">4215</text>
+        <text x="397" y="137" text-anchor="middle" fill="#0A5A63" font-size="9">empty</text>
+
+        <rect x="434" y="102" width="62" height="44" rx="3" fill="#FAFCFC" stroke="#D6DFE4"/>
+        <text x="465" y="129" text-anchor="middle" fill="#C2CFD6">4216</text>
+        <rect x="502" y="102" width="62" height="44" rx="3" fill="#FAFCFC" stroke="#D6DFE4"/>
+        <text x="533" y="129" text-anchor="middle" fill="#C2CFD6">4217</text>
+        <rect x="570" y="102" width="62" height="44" rx="3" fill="#FAFCFC" stroke="#D6DFE4"/>
+        <text x="601" y="129" text-anchor="middle" fill="#C2CFD6">4218</text>
+
+        <rect x="644" y="102" width="66" height="44" rx="3" fill="#E5EBEE" stroke="#D6DFE4"/>
+        <text x="677" y="129" text-anchor="middle" fill="#9DAEB7">4219</text>
+        <text x="726" y="129" fill="#C2CFD6">…</text>
+      </g>
+
+      <text x="431" y="174" text-anchor="middle" font-family="Archivo, sans-serif" font-size="11" font-weight="700" fill="#0D6E78">at most 6 slots checked</text>
+
+      <text x="80" y="208" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">All six taken by <tspan font-style="italic">other</tspan> keys? No growth, no eviction. The CDF is called directly instead.</text>
+      <text x="80" y="228" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">A full table costs bounded extra effort, never a wrong answer and never runaway memory.</text>
+    </svg>
+    <figcaption><b>Fig 5.</b> The six slots are not reserved for this key. They are simply the next six positions in one shared array, and other keys can land inside that window too.</figcaption>
+  </figure>
+
+  <div class="deep">
+    <span class="tag">Under the hood</span>
+    <p>Stored values are raw 32-bit patterns rather than floats. A CDF can legitimately return <code>-0.0</code> or a <code>NaN</code>, and those must key and compare as distinct entries, so nothing in the cache layer ever compares floats with <code>==</code>. Everything goes through memcpy-based bit extraction instead.</p>
+  </div>
+</section>
+
+<!-- ================= 05 ================= -->
+<section class="sec wrap" id="tail">
+  <div class="sec-head">
+    <span class="sec-num">05</span>
+    <h2>The moment randomness stops mattering</h2>
+  </div>
+  <div class="col">
+    <p>The head cache saves one CDF call at a time. Useful, but bounded, since you still walk all 64 rounds.</p>
+
+    <p>The second idea skips a part of the sample entirely, by exploiting the rounds that don't need a coin flip.</p>
+
+    <p>Once a walk passes its final coin flip, every round after that is deterministic. The generator keeps computing, but there is nothing left to decide, since the answer is already determined.</p>
+  </div>
+
+  <div class="callout">
+    <p>After the last coin flip, the rest of the walk is a function. Feed it the same state and it returns the same number every time, because the coin is never consulted again.</p>
+  </div>
+
+  <div class="col">
+    <p>So the cache records that state and pairs it with the finished result. Any future sample landing on the same state can jump straight to the answer.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 396" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two samples with different random paths converge on the same state and share an identical forced ending; a third reads the stored answer">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 6. DIFFERENT ROUTES, IDENTICAL ENDINGS</text>
+
+      <rect x="535" y="50" width="295" height="248" fill="#D5E9EA" opacity="0.42"/>
+      <line x1="535" y1="50" x2="535" y2="298" stroke="#0D6E78" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <text x="546" y="66" font-family="Archivo, sans-serif" font-size="12" font-weight="700" fill="#0D6E78">no more coin flips from here</text>
+
+      <text x="26" y="108" font-family="Archivo, sans-serif" font-size="12" font-weight="700" fill="#41535E">Sample A</text>
+      <text x="26" y="124" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">seed 4471</text>
+      <g>
+        <rect x="140" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="176" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="212" y="92" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="248" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="284" y="92" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="320" y="92" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="356" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="392" y="92" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="428" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="464" y="92" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="500" y="92" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="536" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="572" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="608" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="644" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="680" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="716" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="752" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="788" y="92" width="34" height="26" rx="2" fill="#0D6E78"/>
+      </g>
+      <text x="838" y="110" font-family="JetBrains Mono, monospace" font-size="11" font-weight="700" fill="#0A5A63">→ 0.3184…</text>
+
+      <text x="26" y="178" font-family="Archivo, sans-serif" font-size="12" font-weight="700" fill="#41535E">Sample B</text>
+      <text x="26" y="194" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">seed 9902</text>
+      <g>
+        <rect x="140" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="176" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="212" y="162" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="248" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="284" y="162" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="320" y="162" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="356" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="392" y="162" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="428" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="464" y="162" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="500" y="162" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="536" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="572" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="608" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="644" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="680" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="716" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="752" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+        <rect x="788" y="162" width="34" height="26" rx="2" fill="#0D6E78"/>
+      </g>
+      <text x="838" y="180" font-family="JetBrains Mono, monospace" font-size="11" font-weight="700" fill="#0A5A63">→ 0.3184…</text>
+
+      <text x="140" y="142" font-family="Source Serif 4, serif" font-size="12" font-style="italic" fill="#8A5E10">different flips, different route</text>
+      <text x="546" y="142" font-family="Source Serif 4, serif" font-size="12" font-style="italic" fill="#0A5A63">same state, identical ending</text>
+
+      <text x="26" y="252" font-family="Archivo, sans-serif" font-size="12" font-weight="700" fill="#41535E">Sample C</text>
+      <text x="26" y="268" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">cache hit</text>
+      <g>
+        <rect x="140" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="176" y="236" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="212" y="236" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="248" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="284" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="320" y="236" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="356" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="392" y="236" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="428" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="464" y="236" width="34" height="26" rx="2" fill="#E0AC55"/>
+        <rect x="500" y="236" width="34" height="26" rx="2" fill="#C8871B"/>
+        <rect x="536" y="236" width="286" height="26" rx="3" fill="none" stroke="#0D6E78" stroke-width="1.6" stroke-dasharray="5 4"/>
+        <text x="679" y="254" text-anchor="middle" font-family="Archivo, sans-serif" font-size="12" font-weight="700" fill="#0D6E78">skipped, one table lookup</text>
+      </g>
+      <text x="838" y="254" font-family="JetBrains Mono, monospace" font-size="11" font-weight="700" fill="#0A5A63">→ 0.3184…</text>
+
+      <line x1="140" y1="298" x2="822" y2="298" stroke="#D6DFE4"/>
+      <text x="140" y="318" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">round 0</text>
+      <text x="535" y="318" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="#0D6E78" font-weight="700">last coin flip</text>
+      <text x="822" y="318" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">round 63</text>
+
+      <text x="140" y="354" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">The stored key is the full state at that round, <tspan font-family="JetBrains Mono, monospace" font-size="12" fill="#132029">(b, l, cdf_l, cdf_r, ell)</tspan>, with all five fields compared exactly.</text>
+      <text x="140" y="376" font-family="Source Serif 4, serif" font-size="13" fill="#41535E">Sample C spends its coin flips as normal, then stops computing and reads the stored answer.</text>
+    </svg>
+    <figcaption><b>Fig 6.</b> Gold rounds consumed randomness, teal rounds did not. A and B flipped different coins and travelled different routes, yet landed in the same state, so their endings are necessarily identical.</figcaption>
+  </figure>
+
+  <div class="col">
+    <h3>Why this doesn't quietly break anything</h3>
+    <p>A cache hit only skips rounds that use zero coin flips, and without the cache those same rounds would have used zero as well. So the random stream ends up in exactly the state it would have anyway. That's also why the algorithm only stores states after the last flip, and only once the full sample is known: anything earlier still depends on randomness, and the answer doesn't exist until the walk is done.</p>
+  </div>
+
+  <div class="deep">
+    <span class="tag">Under the hood</span>
+    <p>Every comparison against unmodified librvg checks two things: the raw bit pattern of the result, and the exact coin-flip count. 33 parameterizations, 20,000 seeds each, zero mismatches on both. The flip count is what makes this convincing, since a broken cache would desynchronize the random stream immediately, long before a distributional test would ever catch it.</p>
+  </div>
+</section>
+
+<!-- ================= 06 ================= -->
+<section class="sec wrap" id="design">
+  <div class="sec-head">
+    <span class="sec-num">06</span>
+    <h2>Two engineering decisions worth defending</h2>
+  </div>
+  <div class="col">
+    <h3>The loop had to be copied</h3>
+    <p>Both caches need to hook things that happen inside librvg's walk: the CDF call, and the state at each round. C offers no way to intercept a call made inside somebody else's function without editing that function. Since the requirement was that librvg stay untouched, the loop was duplicated instead with the cache calls spliced into the copy.</p>
+
+    <p>Only the control flow is duplicated. The arithmetic that determines the sampled value, the exact subtraction, the bit extraction, the float conversions, is not reimplemented. The cache links against the same compiled functions librvg calls.</p>
+
+    <p>When caching isn't available, whether the distribution wasn't measured to benefit, the allocation failed, or the registry is full, the code falls back to the exact same uncached path automatically.</p>
+
+    <h3>The cache made itself invisible</h3>
+    <p>An earlier version handed callers a cache object to create and manage by hand, and mismatching it with the wrong CDF was a real risk, caught only by a runtime check that killed the process. The current version removes that risk instead of just detecting it: caching state is located automatically, so there's no handle left to mismatch, and cleanup happens on its own.</p>
+  </div>
+</section>
+
+<!-- ================= 07 ================= -->
+<section class="sec wrap" id="evidence">
+  <div class="sec-head">
+    <span class="sec-num">07</span>
+    <h2>The evidence</h2>
+  </div>
+  <div class="col">
+    <p>A fast sampler that is subtly wrong is worth nothing, so correctness comes first. Every comparison checks the raw bit pattern of the result and the exact coin-flip count against unmodified librvg.</p>
+  </div>
+
+  <div class="tbl">
+    <table>
+      <thead><tr><th class="l">Test</th><th>Configurations</th><th>Seeds each</th><th>Mismatches</th></tr></thead>
+      <tbody>
+        <tr><td>Deep sweep across typical, skewed and edge parameters</td><td class="num">33</td><td class="num">20,000</td><td class="num"><span class="zero">0</span></td></tr>
+        <tr><td>Current automatic API</td><td class="num">11</td><td class="num">10,000</td><td class="num"><span class="zero">0</span></td></tr>
+        <tr><td>Interleaved CDFs sharing one random stream</td><td class="num">3</td><td class="num">3,000 rounds</td><td class="num"><span class="zero">0</span></td></tr>
+      </tbody>
+    </table>
+    <p class="tbl-cap"><b>Table 3.</b> The third test alternates between two differently parameterized Gammas and a Poisson, all drawing from one shared random stream: 9,000 calls total. No crash, no divergence. A separate check, roughly 20,000 calls with zero manual cleanup, found 0 leaks and 0 leaked bytes.</p>
+  </div>
+
+  <div class="col">
+    <h3>What happens when the table fills</h3>
+    <p>The head cache is fixed at 65,536 slots and never grows. Chi-square and Gamma fill theirs entirely within the tested range, Chi-square by 25,000 samples and Gamma by 50,000. After that, many new lookups find no room at all.</p>
+
+    <p>The speed keeps increasing anyway. The reason is arrival order: the slots that fill first hold the shallow, high-traffic states that nearly every sample passes through, and those keep paying off indefinitely. What arrives later, once the table is full, tends to be rare deep states a typical sample would hit once or twice at most, so losing them costs little. A failed lookup is cheap too, at most six slot checks before falling back, a fixed worst-case cost rather than one that grows as the table fills.</p>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 460" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Two panels sharing an x-axis: head cache occupancy reaching capacity, and hit rate continuing to climb past that point">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 7. THE TABLE FILLS, THE HIT RATE KEEPS CLIMBING</text>
+
+      <!-- PANEL 1: occupancy -->
+      <text x="140" y="56" font-family="Archivo, sans-serif" font-size="11" font-weight="700" letter-spacing=".06em" fill="#41535E">SLOTS USED</text>
+      <line x1="140" y1="70" x2="800" y2="70" stroke="#C8871B" stroke-width="1.5" stroke-dasharray="6 4"/>
+      <text x="808" y="67" font-family="Archivo, sans-serif" font-size="10" font-weight="700" fill="#C8871B">65,536</text>
+      <text x="808" y="80" font-family="Source Serif 4, serif" font-size="10" fill="#8A5E10">table full</text>
+      <line x1="140" y1="210" x2="800" y2="210" stroke="#B6C4CC"/>
+      <line x1="140" y1="64" x2="140" y2="210" stroke="#B6C4CC"/>
+      <text x="128" y="74" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9" fill="#9DAEB7">65k</text>
+      <text x="128" y="214" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9" fill="#9DAEB7">0</text>
+
+      <polyline fill="none" stroke="#0D6E78" stroke-width="2.4"
+        points="140,206.6 227.5,202.3 293.8,195.7 360,183.5 426.2,161.4 513.8,109.1 580,74.7 667.5,70 733.8,70 800,70"/>
+      <circle cx="667.5" cy="70" r="4.5" fill="#0D6E78"/>
+      <polyline fill="none" stroke="#5FA6AC" stroke-width="2.4"
+        points="140,207.0 227.5,203.3 293.8,197.6 360,187.4 426.2,168.9 513.8,123.8 580,83.3 667.5,70.1 733.8,70 800,70"/>
+      <circle cx="733.8" cy="70" r="4.5" fill="#5FA6AC"/>
+      <polyline fill="none" stroke="#B6C4CC" stroke-width="2.4"
+        points="140,207.5 227.5,204.6 293.8,200.4 360,192.8 426.2,179.9 513.8,149.3 580,113.7 667.5,75.6 733.8,70.3 800,70.0"/>
+
+      <text x="667.5" y="60" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="9" font-weight="700" fill="#0D6E78">full at 25k</text>
+      <text x="742" y="92" font-family="JetBrains Mono, monospace" font-size="9" font-weight="700" fill="#3D8990">full at 50k</text>
+
+      <!-- PANEL 2: hit rate -->
+      <text x="140" y="252" font-family="Archivo, sans-serif" font-size="11" font-weight="700" letter-spacing=".06em" fill="#41535E">HIT RATE</text>
+      <line x1="140" y1="380" x2="800" y2="380" stroke="#B6C4CC"/>
+      <line x1="140" y1="258" x2="140" y2="380" stroke="#B6C4CC"/>
+      <g stroke="#EDF2F4" stroke-width="1">
+        <line x1="140" y1="260" x2="800" y2="260"/>
+        <line x1="140" y1="320" x2="800" y2="320"/>
+      </g>
+      <text x="128" y="264" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9" fill="#9DAEB7">100%</text>
+      <text x="128" y="324" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9" fill="#9DAEB7">70%</text>
+      <text x="128" y="384" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="9" fill="#9DAEB7">40%</text>
+
+      <!-- saturation markers carried down -->
+      <line x1="667.5" y1="258" x2="667.5" y2="380" stroke="#0D6E78" stroke-width="1" stroke-dasharray="3 3" opacity=".55"/>
+      <line x1="733.8" y1="258" x2="733.8" y2="380" stroke="#5FA6AC" stroke-width="1" stroke-dasharray="3 3" opacity=".55"/>
+
+      <polyline fill="none" stroke="#B6C4CC" stroke-width="2.4"
+        points="140,339.2 227.5,329.2 293.8,322.2 360,315.4 426.2,308.6 513.8,299.4 580,292.8 667.5,285.8 733.8,282.8 800,281.2"/>
+      <polyline fill="none" stroke="#5FA6AC" stroke-width="2.4"
+        points="140,357.0 227.5,347.2 293.8,340.0 360,333.0 426.2,326.4 513.8,317.4 580,311.2 667.5,306.2 733.8,304.2 800,303.4"/>
+      <polyline fill="none" stroke="#0D6E78" stroke-width="2.4"
+        points="140,355.2 227.5,347.0 293.8,341.4 360,335.2 426.2,329.0 513.8,321.2 580,316.2 667.5,312.6 733.8,311.4 800,310.8"/>
+
+      <text x="812" y="285" font-family="JetBrains Mono, monospace" font-size="10" fill="#7A8B95">89%</text>
+      <text x="812" y="307" font-family="JetBrains Mono, monospace" font-size="10" fill="#3D8990">78%</text>
+      <text x="812" y="322" font-family="JetBrains Mono, monospace" font-size="10" fill="#0D6E78">75%</text>
+
+      <!-- shared x axis -->
+      <g font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7" text-anchor="middle">
+        <text x="140" y="398">100</text><text x="360" y="398">1k</text>
+        <text x="580" y="398">10k</text><text x="733.8" y="398">50k</text><text x="800" y="398">100k</text>
+      </g>
+      <text x="470" y="420" text-anchor="middle" font-family="Archivo, sans-serif" font-size="11" font-weight="700" letter-spacing=".06em" fill="#7A8B95">SAMPLES DRAWN (LOG SCALE)</text>
+
+      <g font-family="JetBrains Mono, monospace" font-size="10">
+        <rect x="200" y="440" width="12" height="3" fill="#0D6E78"/><text x="220" y="445" fill="#41535E">CHISQUARE</text>
+        <rect x="330" y="440" width="12" height="3" fill="#5FA6AC"/><text x="350" y="445" fill="#41535E">GAMMA</text>
+        <rect x="440" y="440" width="12" height="3" fill="#B6C4CC"/><text x="460" y="445" fill="#41535E">BETA (never fills in range)</text>
+      </g>
+    </svg>
+    <figcaption><b>Fig 7.</b> The dashed vertical lines mark where each table saturates. The entries that made it in before the table filled are the ones being hit, and they keep paying off long after new arrivals stop finding room.</figcaption>
+  </figure>
+
+  <div class="deep">
+    <span class="tag">Under the hood</span>
+    <p>The occupancy and hit-rate figures come from a separate instrumented run, since counting entries and hits changes the timing slightly. Within that run, speedup continued to climb past saturation: Chi-square from 1.244&times; to 1.270&times;, Gamma from 1.285&times; to 1.327&times;.</p>
+  </div>
+</section>
+
+<!-- ================= 08 ================= -->
+<section class="sec wrap" id="limits">
+  <div class="sec-head">
+    <span class="sec-num">08</span>
+    <h2>Where this does not work</h2>
+  </div>
+  <div class="col">
+    <ul>
+      <li><strong>Single-threaded only.</strong> All cache state is shared, so calling this from multiple threads at once is not safe.</li>
+      <li><strong>The cache tracks CDFs by memory address, not by what they compute.</strong> Two separate functions that calculate the same distribution still get two separate caches, since the system can't tell they are mathematically identical.</li>
+      <li><strong>64 distinct CDFs maximum</strong>, located by a linear scan. Past the cap, new CDFs simply run uncached with no error raised, and that scan itself adds a small amount of per-call overhead as the number of distributions grows.</li>
+      <li><strong>One machine, one compiler.</strong> Every number here comes from a single Apple Silicon machine under Apple Clang. Speedups may differ on other hardware or with a different compiler.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================= 09 ================= -->
+<section class="sec wrap" id="next">
+  <div class="sec-head">
+    <span class="sec-num">09</span>
+    <h2>Where this could go next</h2>
+  </div>
+  <div class="col">
+    <ul>
+      <li><strong>Parameter-aware caching.</strong> Today a Gamma(2,3) and a Gamma(2.01,3) share nothing at all.</li>
+      <li><strong>The middle of the walk is still uncovered.</strong> The head cache handles the start and the tail cache handles the end. Everything in between stays uncached: those rounds are too specific to be worth storing individually, and still consume randomness, so neither trick applies.</li>
+      <li><strong>The tuning is still manual.</strong> Which distributions get a tail cache, and how deep the head cache reaches, were both set by hand from measurements. A short profiling pass at startup could pick those settings per workload instead.</li>
+    </ul>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 960 250" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A single walk divided into three regions: head cache at the start, an uncovered middle, and tail cache at the end">
+      <text x="26" y="28" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="1.4" fill="#7A8B95">FIG 8. WHAT EACH CACHE ACTUALLY COVERS</text>
+
+      <rect x="60" y="76" width="200" height="44" rx="3" fill="#D5E9EA" stroke="#0D6E78" stroke-width="1.5"/>
+      <rect x="264" y="76" width="440" height="44" rx="3" fill="#F4F7F8" stroke="#C2CFD6" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <rect x="708" y="76" width="192" height="44" rx="3" fill="#D5E9EA" stroke="#0D6E78" stroke-width="1.5"/>
+
+      <text x="160" y="103" text-anchor="middle" font-family="Archivo, sans-serif" font-size="13" font-weight="700" fill="#0A5A63">HEAD CACHE</text>
+      <text x="484" y="103" text-anchor="middle" font-family="Archivo, sans-serif" font-size="13" font-weight="700" fill="#8B9BA5">UNCOVERED</text>
+      <text x="804" y="103" text-anchor="middle" font-family="Archivo, sans-serif" font-size="13" font-weight="700" fill="#0A5A63">TAIL CACHE</text>
+
+      <line x1="60" y1="140" x2="900" y2="140" stroke="#D6DFE4"/>
+      <text x="60" y="158" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">round 0</text>
+      <text x="900" y="158" text-anchor="end" font-family="JetBrains Mono, monospace" font-size="10" fill="#9DAEB7">round 63</text>
+      <text x="708" y="158" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="10" fill="#0D6E78" font-weight="700">last coin flip</text>
+
+      <text x="160" y="190" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">Few distinct states,</text>
+      <text x="160" y="206" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">shared by nearly</text>
+      <text x="160" y="222" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">every sample.</text>
+
+      <text x="484" y="190" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">States too specific to be worth storing,</text>
+      <text x="484" y="206" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">and randomness is still being consumed,</text>
+      <text x="484" y="222" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">so neither trick applies here yet.</text>
+
+      <text x="804" y="190" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">Fully determined.</text>
+      <text x="804" y="206" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">One lookup replaces</text>
+      <text x="804" y="222" text-anchor="middle" font-family="Source Serif 4, serif" font-size="12" fill="#41535E">the whole stretch.</text>
+    </svg>
+    <figcaption><b>Fig 8.</b></figcaption>
+  </figure>
+</section>
+
+<!-- ================= 10 ================= -->
+<section class="sec wrap" id="credit">
+  <div class="sec-head">
+    <span class="sec-num">10</span>
+    <h2>Credit and references</h2>
+  </div>
+  <div class="col">
+    <p>The method being cached here is not mine. All of it rests on the exact random variate generation work of <strong>Feras A. Saad</strong> (Carnegie Mellon University) and <strong>Wonyeol Lee</strong> (POSTECH), and on their C library <strong>librvg</strong>.</p>
+
+    <p>This work adds a memoization layer that makes repeated sampling faster while leaving the guarantees, the values, and the random-bit consumption exactly as they were. librvg itself is not modified in any way.</p>
+  </div>
+
+  <ol class="refs">
+    <li>Feras A. Saad and Wonyeol Lee. 2025. <strong>Random Variate Generation with Formal Guarantees.</strong> <em>Proceedings of the ACM on Programming Languages</em> 9, PLDI, Article 152 (June 2025), 25 pages. <a href="https://doi.org/10.1145/3729251">doi:10.1145/3729251</a> &middot; <a href="https://arxiv.org/abs/2507.13494">arXiv:2507.13494</a></li>
+
+    <li>Feras A. Saad and Wonyeol Lee. 2025. <strong>librvg: C Library for Random Variate Generation with Formal Guarantees.</strong> Software artifact. <a href="https://doi.org/10.5281/zenodo.15243770">doi:10.5281/zenodo.15243770</a> &middot; <a href="https://github.com/probsys/librvg">github.com/probsys/librvg</a> (Apache-2.0)</li>
+
+    <li>Donald E. Knuth and Andrew C. Yao. 1976. <strong>The Complexity of Nonuniform Random Number Generation.</strong> In <em>Algorithms and Complexity: New Directions and Recent Results</em>, edited by J. F. Traub. Academic Press, New York, pp. 357&ndash;428. The entropy-optimal generating-tree method both later approaches build on.</li>
+
+    <li>Sujoy Sinha Roy, Frederik Vercauteren, and Ingrid Verbauwhede. 2013. <strong>High Precision Discrete Gaussian Sampling on FPGAs.</strong> In <em>Selected Areas in Cryptography &mdash; SAC 2013</em>, T. Lange, K. Lauter, and P. Lisoněk, eds., Lecture Notes in Computer Science, vol. 8282. Springer, pp. 383&ndash;401. <a href="https://doi.org/10.1007/978-3-662-43414-7_19">doi:10.1007/978-3-662-43414-7_19</a>. The column-wise probability-matrix implementation of Knuth&ndash;Yao referenced in Table 1.</li>
+
+    <li>This caching layer: <a href="https://github.com/tshiven/Caching-Random-Variate">github.com/tshiven/Caching-Random-Variate</a></li>
+  </ol>
+</section>
+
+<hr>
+<footer>
+  <p>Caching layer &middot; Apache-2.0 &middot; <a href="https://github.com/tshiven/Caching-Random-Variate">github.com/tshiven/Caching-Random-Variate</a><br>
+  Built on librvg by Feras A. Saad and Wonyeol Lee, core library unmodified</p>
+</footer>
+</main>
+
+</body>
+</html>

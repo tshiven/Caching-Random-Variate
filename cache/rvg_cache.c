@@ -1,11 +1,21 @@
 /*
   Name:     rvg_cache.c
   Purpose:  Optional CDF-memoization layer for optimal random variate generation.
-  Note:     Compile with the repository root on the include path, e.g.
-              gcc -c -I.. $(gsl-config --cflags) cache/rvg_cache.c
-            The root Makefile globs only `*.c` in the top-level directory, so
-            this file is not picked up by it; that is deliberate, since adding
-            it would require modifying an existing file.
+
+  Design:   The public API is a single function, rvg_generate(cdf, prng, dist,
+            force_unsafe). Everything about caching -- the hash tables, their
+            capacities, per-distribution tuning, and the registry mapping each
+            distinct `cdf` seen so far to its own cache -- is private to this
+            file. Callers never see or manage a cache object; it is built the
+            first time a given `cdf` is used and freed automatically when the
+            process exits normally (via atexit), so there is nothing to set
+            up or tear down from the outside.
+
+            Two internal-only functions at the bottom (rvg_internal_*) are not
+            declared in rvg_cache.h and are not part of the public API -- they
+            exist solely so this project's own test/report programs can
+            forward-declare them locally and inspect/reset cache state for
+            verification purposes.
 */
 
 #include <assert.h>
@@ -23,12 +33,10 @@
 
 #include "rvg_cache.h"
 
-/* The recorded-state array is sized statically; DBL_SIZE is 64. */
+/* 64 bits (the tree is at max 64 levels deep) */
 #define RVG_MAX_LEVELS 64
 
-/* ------------------------------------------------------------------ */
-/* Raw-bit float handling                                              */
-/* ------------------------------------------------------------------ */
+// Raw-bit float handling
 
 /* Floats are never compared with `==` in this file: a CDF may legitimately
    return -0.0 or a NaN, and those must key distinctly. Everything goes
@@ -46,9 +54,23 @@ static float f32_from_bits(uint32_t u) {
     return f;
 }
 
-/* ------------------------------------------------------------------ */
-/* Tables                                                              */
-/* ------------------------------------------------------------------ */
+// Cache tuning
+
+#define RVG_HEAD_CAPACITY 65536u  /* head-cache slots, ~1.5 MiB */
+#define RVG_TAIL_CAPACITY 16384u  /* tail-cache slots, ~0.6 MiB */
+#define RVG_HEAD_MAX_PROBES 6
+#define RVG_TAIL_MAX_PROBES 8
+
+/* Max distinct `cdf` functions the registry can manage a cache for at once.
+   Fixed, like everything else here -- once full, later new CDFs just fall
+   back to an uncached descent instead of erroring out. */
+#define RVG_AUTO_REGISTRY_CAPACITY 64u
+
+typedef enum { RVG_STATUS_OK, RVG_STATUS_NOT_RECOMMENDED, RVG_STATUS_UNMEASURED } rvg_status_t;
+
+typedef struct { size_t head_hits, head_misses, tail_hits, tail_misses, head_entries, tail_entries, head_probe_fail; } rvg_stats_t;
+
+// Tables
 
 struct rvg_dist_params {
     unsigned int head_depth;
@@ -83,11 +105,9 @@ static const struct rvg_dist_params RVG_DIST_TABLE[] = {
 
 #define RVG_DIST_COUNT (sizeof(RVG_DIST_TABLE) / sizeof(RVG_DIST_TABLE[0]))
 
-/* ------------------------------------------------------------------ */
-/* Cache structures                                                    */
-/* ------------------------------------------------------------------ */
+// Cache structures
 
-/* Head entry: key (b, l), value = raw bits of the float the CDF returned. */
+// Head entry: key (b, l), value = raw bits of the float the CDF returned.
 struct head_entry {
     uint64_t b;
     uint32_t l;
@@ -95,8 +115,8 @@ struct head_entry {
     uint8_t  used;
 };
 
-/* Tail entry: key (b, l, cdf_l, cdf_r, ell), all five compared exactly;
-   the two CDF fields are held as raw bit patterns. Value = final double. */
+// Tail entry: key (b, l, cdf_l, cdf_r, ell), all five compared exactly;
+// the two CDF fields are held as raw bit patterns. Value = final double.
 struct tail_entry {
     uint64_t b;
     uint32_t l;
@@ -117,21 +137,10 @@ struct rvg_cache {
     size_t head_capacity;   /* fixed at construction, never changes */
     size_t tail_capacity;   /* fixed at construction, never changes */
 
-    /* Identity of the cdf32_t this cache's entries were computed against.
-       0 means "unbound" (no rvg_generate call has happened yet); any other
-       value is the function pointer that bound it, held as a uintptr_t so
-       the struct doesn't need to carry the cdf32_t typedef. A cache's keys
-       do not encode which CDF produced them, so reusing one cache across
-       different CDFs would silently return values computed for the wrong
-       distribution -- this field turns that into a hard abort() instead. */
-    uintptr_t bound_cdf;
-
     rvg_stats_t stats;
 };
 
-/* ------------------------------------------------------------------ */
-/* Hashing                                                             */
-/* ------------------------------------------------------------------ */
+// Hashing
 
 static uint64_t mix64(uint64_t z) {
     z += 0x9e3779b97f4a7c15ull;
@@ -151,9 +160,7 @@ static size_t tail_hash(uint64_t b, uint32_t l, uint32_t cl, uint32_t cr, uint32
     return (size_t)h;
 }
 
-/* ------------------------------------------------------------------ */
-/* Head cache                                                          */
-/* ------------------------------------------------------------------ */
+// Head cache
 
 /* Return the memoized cdf(d) for (b, l), computing and inserting it on a
    miss. Never resizes and never evicts: after RVG_HEAD_MAX_PROBES occupied,
@@ -188,9 +195,8 @@ static float head_lookup(struct rvg_cache *c, cdf32_t cdf, uint64_t b, uint32_t 
     return cdf(d);
 }
 
-/* ------------------------------------------------------------------ */
-/* Tail cache                                                          */
-/* ------------------------------------------------------------------ */
+
+// Tail cache
 
 static int tail_lookup(struct rvg_cache *c, uint64_t b, uint32_t l,
                        uint32_t cl, uint32_t cr, uint32_t ell, double *out) {
@@ -242,11 +248,9 @@ static void tail_insert(struct rvg_cache *c, uint64_t b, uint32_t l,
     }
 }
 
-/* ------------------------------------------------------------------ */
-/* Lifecycle                                                           */
-/* ------------------------------------------------------------------ */
+/* Cache lifecycle -- private. Callers never see a cache object.       */
 
-rvg_cache_t *rvg_cache_create(rvg_dist_t dist, int force_unsafe, rvg_status_t *status) {
+static struct rvg_cache *cache_create(rvg_dist_t dist, int force_unsafe, rvg_status_t *status) {
 
     if ((unsigned int)dist >= RVG_DIST_COUNT) {
         if (status) { *status = RVG_STATUS_UNMEASURED; }
@@ -270,7 +274,6 @@ rvg_cache_t *rvg_cache_create(rvg_dist_t dist, int force_unsafe, rvg_status_t *s
     c->tail_enabled = p->tail_enabled;
     c->status       = p->status;
 
-    /* Capacities are fixed here, once and for all. */
     c->head_capacity = RVG_HEAD_CAPACITY;
     c->tail_capacity = RVG_TAIL_CAPACITY;
 
@@ -297,27 +300,18 @@ rvg_cache_t *rvg_cache_create(rvg_dist_t dist, int force_unsafe, rvg_status_t *s
     return c;
 }
 
-void rvg_cache_free(rvg_cache_t *c) {
+static void cache_free(struct rvg_cache *c) {
     if (c == NULL) { return; }
     free(c->head);
     free(c->tail);
     free(c);
 }
 
-size_t rvg_cache_head_entry_size(void) { return sizeof(struct head_entry); }
-size_t rvg_cache_tail_entry_size(void) { return sizeof(struct tail_entry); }
+/* The descent loop -- a copy of generate_opt's loop (generate.c), so the
+   cdf(d) call site can be intercepted; wrapping generate_opt from the
+   outside cannot reach that call site. `c` may be NULL for an uncached
+   descent, identical to generate_opt. */
 
-rvg_stats_t rvg_cache_stats(rvg_cache_t *c) {
-    rvg_stats_t empty = {0, 0, 0, 0, 0, 0};
-    if (c == NULL) { return empty; }
-    return c->stats;
-}
-
-/* ------------------------------------------------------------------ */
-/* Cached generation                                                   */
-/* ------------------------------------------------------------------ */
-
-/* State recorded at the top of one loop iteration, for tail-cache insertion. */
 struct level_state {
     uint64_t b;
     uint32_t l;
@@ -326,39 +320,15 @@ struct level_state {
     uint32_t ell;
 };
 
-/* The body below is the loop of `generate_opt` (generate.c), reproduced here
-   so that the `cdf(d)` call inside it can be intercepted; wrapping
-   `generate_opt` from the outside cannot reach that call site. Control flow,
-   assertions and debug cross-checks are unchanged -- the only additions are
-   the tail-cache probe at the top of the iteration, the head-cache-mediated
-   CDF evaluation, and the recording of `last_flip_l`. */
-double rvg_generate(cdf32_t cdf, struct flip_state *prng, rvg_cache_t *c) {
+static double generate_with_cache(cdf32_t cdf, struct flip_state *prng, struct rvg_cache *c) {
 
-    // Evolving state.
+    // Evolving state
     uint64_t b = 0;
     unsigned int ell = 0;
     float cdf_l = 0;
     float cdf_r = 1;
 
     assert(DBL_SIZE <= RVG_MAX_LEVELS);
-
-    // A cache's keys carry no identity for the CDF that produced them, so
-    // reusing one cache across two different CDFs would silently return
-    // values computed for the wrong distribution. Bind on first use, then
-    // enforce it on every subsequent call -- one pointer comparison.
-    if (c != NULL) {
-        uintptr_t this_cdf = (uintptr_t)cdf;
-        if (c->bound_cdf == 0) {
-            c->bound_cdf = this_cdf;
-        } else if (c->bound_cdf != this_cdf) {
-            fprintf(stderr,
-                    "rvg_generate: cache was bound to cdf=%p on first use, "
-                    "but was passed cdf=%p; a cache must be used with a "
-                    "single CDF for its entire lifetime.\n",
-                    (void *)c->bound_cdf, (void *)this_cdf);
-            abort();
-        }
-    }
 
     const int tail_on = (c != NULL) && c->tail_enabled && (c->tail != NULL);
     struct level_state levels[RVG_MAX_LEVELS];
@@ -404,6 +374,7 @@ double rvg_generate(cdf32_t cdf, struct flip_state *prng, rvg_cache_t *c) {
         uint64_t b_lex = (b << (m + 1)) + (1ull << m) - 1; // b+'0' + '1'*m
         uint64_t b_flt = bij64_lex2float(b_lex);
         double d = int2double(b_flt);
+
         // Head cache: cdf(d) is a pure function of (b, l), memoized shallowly.
         float cdf_m;
         if ((c != NULL) && ((unsigned int)l <= c->head_depth)) {
@@ -508,4 +479,73 @@ double rvg_generate(cdf32_t cdf, struct flip_state *prng, rvg_cache_t *c) {
     }
 
     return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* The auto-registry: maps each distinct `cdf` seen so far to its own      */
+/* cache (or to NULL, meaning "known -- run this one uncached"). This is   */
+/* what makes rvg_generate need no setup/teardown from the caller.         */
+/* ------------------------------------------------------------------ */
+
+struct auto_entry {
+    cdf32_t cdf;
+    struct rvg_cache *cache;
+};
+
+static struct auto_entry AUTO_REGISTRY[RVG_AUTO_REGISTRY_CAPACITY];
+static size_t AUTO_REGISTRY_COUNT = 0;
+static int AUTO_CLEANUP_REGISTERED = 0;
+
+static void auto_registry_cleanup(void) {
+    for (size_t i = 0; i < AUTO_REGISTRY_COUNT; i++) {
+        cache_free(AUTO_REGISTRY[i].cache);
+    }
+    AUTO_REGISTRY_COUNT = 0;
+}
+
+double rvg_generate(cdf32_t cdf, struct flip_state *prng, rvg_dist_t dist, int force_unsafe) {
+
+    for (size_t i = 0; i < AUTO_REGISTRY_COUNT; i++) {
+        if (AUTO_REGISTRY[i].cdf == cdf) {
+            return generate_with_cache(cdf, prng, AUTO_REGISTRY[i].cache);
+        }
+    }
+
+    /* First time this exact cdf has been passed to rvg_generate. */
+    struct rvg_cache *c = NULL;
+    if (AUTO_REGISTRY_COUNT < RVG_AUTO_REGISTRY_CAPACITY) {
+        c = cache_create(dist, force_unsafe, NULL);
+        AUTO_REGISTRY[AUTO_REGISTRY_COUNT].cdf = cdf;
+        AUTO_REGISTRY[AUTO_REGISTRY_COUNT].cache = c;
+        AUTO_REGISTRY_COUNT++;
+
+        if (!AUTO_CLEANUP_REGISTERED) {
+            atexit(auto_registry_cleanup);
+            AUTO_CLEANUP_REGISTERED = 1;
+        }
+    }
+    /* Registry full: fall through with c == NULL, uncached for this call,
+       and not remembered -- every future call for this cdf repeats this
+       same linear scan and falls back the same way. No error. */
+
+    return generate_with_cache(cdf, prng, c);
+}
+
+// Internal-only helpers (not part of the public API)
+
+rvg_stats_t rvg_internal_stats_for_cdf(cdf32_t cdf) {
+    rvg_stats_t empty = {0, 0, 0, 0, 0, 0, 0};
+    for (size_t i = 0; i < AUTO_REGISTRY_COUNT; i++) {
+        if (AUTO_REGISTRY[i].cdf == cdf) {
+            return (AUTO_REGISTRY[i].cache != NULL) ? AUTO_REGISTRY[i].cache->stats : empty;
+        }
+    }
+    return empty;
+}
+
+size_t rvg_internal_head_entry_size(void) { return sizeof(struct head_entry); }
+size_t rvg_internal_tail_entry_size(void) { return sizeof(struct tail_entry); }
+
+void rvg_internal_reset_for_testing(void) {
+    auto_registry_cleanup();
 }

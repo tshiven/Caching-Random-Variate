@@ -1,6 +1,8 @@
 *.a
 *.o
 *.out
+*.dSYM/
+.DS_Store
 build/
 librvg.tar.gz
 readme.html
